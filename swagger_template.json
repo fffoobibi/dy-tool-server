@@ -1,0 +1,43 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "title": "DY-TOOL-SERVER API",
+        "description": "DY-TOOL-SERVER API Project\nA Flask web application\n## 认证方式\n### 1. JWT Token 认证 (推荐)\n在请求头中添加:\n```\nAuthorization: Bearer <your_jwt_token>\n```\n\n### 2. 跳过认证 Token (开发/测试用)\n在请求头中添加:\n```\nskip-auth-token: <skip_auth_token_value>\n```\n\n## 使用说明\n1. **JWT Token 获取**: 通过登录接口获取 JWT Token\n2. **Skip Auth Token**: 仅用于开发和测试环境，生产环境请关闭此功能\n3. **API 基础路径**: `/`\n4. **响应格式**: 所有接口统一返回 JSON 格式",
+        "version": "1.0.0",
+        "contact": {
+            "name": "API Support",
+            "email": ""
+        }
+    },
+    "host": "127.0.0.1:5000",
+    "basePath": "/",
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "securityDefinitions": {
+        "SkipAuth": {
+            "type": "apiKey",
+            "name": "skip-auth-token",
+            "in": "header",
+            "description": "跳过认证的特殊Token，用于测试和内部调用"
+        },
+        "Bearer": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header",
+            "description": "JWT授权头，格式：Bearer <token>"
+        }
+    },
+    "security": [
+        {
+            "SkipAuth": []
+        },
+        {
+            "Bearer": []
+        }
+    ],
+    "tags": [
+       
+    ]
+}
