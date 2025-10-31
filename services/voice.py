@@ -1,14 +1,53 @@
 import time
 import requests
 import typing as t
+
 from typing import Dict, Any
 from loguru import logger
 from models.voice import UserSpeaker, TTSUsageRecord
 from utils.response import success, fail
-from utils.upload import get_upload_file_path
+from utils.upload import (
+    get_upload_file_path,
+    save_upload_file,
+    save_file_by_bytes,
+    get_audio_duration,
+)
 
 
 class FishSpeechAPI:
+    commons = [
+        {
+            "id": None,
+            "speaker_id": "e4642e5edccd4d9ab61a69e82d4f8a14",
+            "speaker_name": "蔡徐坤",
+            "status": "created",
+            "description": "内置",
+            "is_active": 1,
+            "create_time": None,
+            "internal": True,
+        },
+        {
+            "id": None,
+            "speaker_id": "54a5170264694bfc8e9ad98df7bd89c3",
+            "speaker_name": "丁真",
+            "status": "created",
+            "description": "内置",
+            "is_active": 1,
+            "create_time": None,
+            "internal": True,
+        },
+        {
+            "id": None,
+            "speaker_id": "7adc1f97d79d4539bd4e293d34d70e01",
+            "speaker_name": "曾志伟",
+            "status": "created",
+            "description": "内置",
+            "is_active": 1,
+            "create_time": None,
+            "internal": True,
+        },
+    ]
+
     @classmethod
     def clone_voice(
         cls,
@@ -167,12 +206,18 @@ class VoiceService:
             return fail(f"创建音色失败: {str(e)}")
 
     @staticmethod
-    def get_user_speakers(user_id: int, base_url:str, is_active: bool = True, ) -> Dict[str, Any]:
+    def get_user_speakers(
+        user_id: int,
+        base_url: str,
+        is_active: bool = True,
+    ) -> Dict[str, Any]:
         """获取用户音色列表"""
         try:
             speakers = UserSpeaker.get_user_speakers(user_id, base_url, is_active)
-            speaker_list = []
-
+            if "api.fish.audio" in base_url:
+                speaker_list = [*FishSpeechAPI.commons]
+            else:
+                speaker_list = []
             for speaker in speakers:
                 speaker_list.append(
                     {
@@ -183,14 +228,15 @@ class VoiceService:
                         "description": speaker.description,
                         "is_active": speaker.is_active,
                         "create_time": (
-                            speaker.create_time.isoformat()
+                            speaker.create_time.strformat("%Y-%m-%d %H:%M:%S")
                             if speaker.create_time
                             else None
                         ),
+                        "internal": False,
                     }
                 )
-
-            return success({"speakers": speaker_list})
+            logger.info("result {}", speaker_list)
+            return success(resp={"speakers": speaker_list})
 
         except Exception as e:
             logger.error(f"获取用户音色列表失败: {e}")
@@ -382,8 +428,16 @@ class VoiceService:
 
         try:
             # 验证音色是否属于当前用户
-            if not VoiceService.verify_speaker_ownership(user_id, speaker_id):
-                return fail("无权使用该音色", 403)
+            is_online = "api.fish.audio" in base_url
+            if is_online:
+                flag = False
+                for common in FishSpeechAPI.commons:
+                    if common["speaker_id"] == speaker_id:
+                        flag = True
+                        break
+                if flag is False:
+                    if not VoiceService.verify_speaker_ownership(user_id, speaker_id):
+                        return fail("无权使用该音色", 403)
 
             # 创建TTS使用记录
             record = VoiceService.create_tts_record(user_id, speaker_id, text, base_url)
@@ -400,27 +454,55 @@ class VoiceService:
             cost_time = time.time() - start_time
 
             if audio_content:
-                # 这里可以将音频内容保存到文件或上传到存储服务
-                # 暂时返回成功状态
-                audio_url = None  # 实际应用中应该保存音频文件并返回URL
-                audio_base64 = None  # 可以将audio_content转换为base64
+                try:
+                    # 保存音频内容到本地文件
+                    audio_url, local_path = save_file_by_bytes(
+                        audio_content, upload_dir="tts", file_extension="mp3"
+                    )
 
-                # 更新记录为成功
-                VoiceService.update_tts_success(
-                    record,
-                    audio_url=audio_url,
-                    audio_duration=None,  # 可以通过分析音频文件获取时长
-                    cost_time=cost_time,
-                )
+                    # 获取音频时长
+                    audio_duration = get_audio_duration(local_path)
+                    if audio_duration:
+                        logger.info(f"音频时长: {audio_duration}秒")
+                    else:
+                        logger.warning("无法获取音频时长")
 
-                return success(
-                    {
-                        "audio_url": audio_url,
-                        "audio_base64": audio_base64,
-                        "audio_content": audio_content,  # 返回原始音频数据
-                        "record_id": record.id,
-                    }
-                )
+                    # 更新记录为成功
+                    VoiceService.update_tts_success(
+                        record,
+                        audio_url=audio_url,
+                        audio_file_path=local_path,
+                        audio_duration=audio_duration,
+                        cost_time=cost_time,
+                    )
+
+                    return success(
+                        resp={
+                            "audio_url": audio_url,
+                            "audio_duration": audio_duration,
+                            "record_id": record.id,
+                        }
+                    )
+                except Exception as save_error:
+                    # 保存文件失败，但TTS成功，记录警告
+                    logger.warning(f"TTS成功但保存文件失败: {save_error}")
+                    VoiceService.update_tts_success(
+                        record,
+                        audio_url=None,
+                        audio_file_path=None,
+                        audio_duration=None,
+                        cost_time=cost_time,
+                    )
+                    return success(
+                        resp={
+                            "audio_url": None,
+                            "audio_base64": None,
+                            "audio_file_path": None,
+                            "audio_content": audio_content,  # 仍然返回原始音频数据
+                            "record_id": record.id,
+                            "warning": f"音频合成成功，但保存文件失败: {str(save_error)}",
+                        }
+                    )
             else:
                 # 更新记录为失败
                 VoiceService.update_tts_failed(record, "TTS合成返回空数据", cost_time)
@@ -466,7 +548,6 @@ class VoiceService:
 
             if result and result.get("_id"):
                 speaker_id = result.get("_id")
-
                 # 保存到数据库
                 return VoiceService.create_speaker(
                     user_id=user_id,

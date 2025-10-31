@@ -55,3 +55,4 @@ dotenv==0.9.9
 lazy-object-proxy==1.11.0
 pyinstaller==6.15.0
 flasgger==0.9.7.1
+mutagen==1.47.0

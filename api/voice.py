@@ -13,7 +13,7 @@ def verify():
 
 
 @bp.post("/tts")
-def clone_voice():
+def tts():
     """语音克隆接口
     ---
     tags:
@@ -88,7 +88,6 @@ def clone_voice():
       500:
         description: 合成失败
     """
-    user = current_user()
 
     # 参数验证
     data = request.get_json()
@@ -106,7 +105,7 @@ def clone_voice():
 
     # 调用服务层
     return VoiceService.tts_synthesis(
-        user["id"], text, speaker_id, base_url, token, model
+        current_user.id, text, speaker_id, base_url, token, model
     )
 
 
@@ -190,7 +189,6 @@ def create_speaker():
       500:
         description: 创建失败
     """
-    user = current_user()
 
     # 参数验证
     if "audio_file" not in request.files:
@@ -208,12 +206,12 @@ def create_speaker():
 
     # 调用服务层
     return VoiceService.create_speaker_with_api(
-        user["id"], audio_file, speaker_name, base_url, token, description, texts
+        current_user.id, audio_file, speaker_name, base_url, token, description, texts
     )
 
 
 @bp.get("/speakers")
-def get_speakers():
+def speakers():
     """获取用户音色列表
     ---
     tags:
@@ -266,12 +264,11 @@ def get_speakers():
       500:
         description: 获取失败
     """
-    user = current_user()
     base_url = request.args.get("base_url", "").strip()
     is_active = request.args.get("is_active", "true").lower() in ("true", "1", "t")
 
     return VoiceService.get_user_speakers(
-        user["id"],
+        current_user.id,
         base_url,
         is_active
     )

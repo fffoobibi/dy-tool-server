@@ -1,5 +1,4 @@
 from flask import Blueprint, request
-from utils import current_user
 from utils.jwt import verify_auth
 from utils.response import success, fail
 from openai import OpenAI

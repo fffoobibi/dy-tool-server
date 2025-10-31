@@ -3,13 +3,10 @@ from peewee import (
     IntegerField,
     TextField,
     FloatField,
-    ForeignKeyField,
-    DateTimeField,
     BooleanField,
 )
 from datetime import datetime
 from models import BaseModel
-from models.account import User
 
 __all__ = ("UserSpeaker", "TTSUsageRecord")
 
@@ -30,7 +27,10 @@ class UserSpeaker(BaseModel):
 
     class Meta:
         table_name = "user_speakers"
-        indexes = ((("user_id", "speaker_name"), False),)  # 用户下音色名称不重复
+        indexes = (
+            (("user_id", "speaker_name"), False),
+            (("user_id", "api_url"), False),
+        )  # 用户下音色名称不重复
 
     @classmethod
     def get_user_speakers(cls, user_id: int, base_url: str, is_active: bool = True):
