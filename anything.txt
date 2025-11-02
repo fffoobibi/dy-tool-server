@@ -1,0 +1,5 @@
+参考anything-llm mcp 
+实现知识库接口
+提高用户创建知识库的功能
+也要在models下面建立相应的models
+知识库功能封装成service

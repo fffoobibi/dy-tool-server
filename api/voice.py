@@ -1,15 +1,33 @@
 from flask import Blueprint, request
 from utils.jwt import verify_auth
-from utils.response import fail
+from utils.response import fail, success
 from utils import current_user
+from utils.redis import get_redis
 from services.voice import VoiceService
+import json
 
 bp = Blueprint("voice", __name__)
+
+redis_client = get_redis()
 
 
 @bp.before_request
 def verify():
     verify_auth()
+
+
+@bp.post("/play")
+def play():
+    """语音播放接口"""
+    type = request.json.get("type").strip()
+    channel = request.json.get("channel", "").strip()
+    audio_url = request.json.get("audio_url", "").strip()
+    if not channel or not audio_url:
+        return fail("channel和play_url不能为空", 400)
+    redis_client.publish(
+        channel, json.dumps({"type": type, "data": audio_url}, ensure_ascii=False)
+    )
+    return success(msg="语音播放指令已发送")
 
 
 @bp.post("/tts")
@@ -267,11 +285,7 @@ def speakers():
     base_url = request.args.get("base_url", "").strip()
     is_active = request.args.get("is_active", "true").lower() in ("true", "1", "t")
 
-    return VoiceService.get_user_speakers(
-        current_user.id,
-        base_url,
-        is_active
-    )
+    return VoiceService.get_user_speakers(current_user.id, base_url, is_active)
 
 
 @bp.get("/records")
