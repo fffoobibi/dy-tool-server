@@ -31,12 +31,13 @@ def init_blueprints(app: Flask):
         if request.method == "GET":
             logger.info("GET {} {}", request.path, request.query_string)
         else:
-            logger.info(
-                "{} {} {}",
-                request.method,
-                request.path,
-                ("\n" + json.dumps(request.json, ensure_ascii=False, indent=4)),
-            )
+            if request.content_type == 'application/json':
+                logger.info(
+                    "{} {} {}",
+                    request.method,
+                    request.path,
+                    ("\n" + json.dumps(request.json, ensure_ascii=False, indent=4)),
+                )
 
     # 尝试从文件系统中发现模块
     try:

@@ -9,10 +9,10 @@ from settings import SKIP_AUTH_TOKEN
 from models.account import User
 from collections import namedtuple
 
+from config.knowledge import kb_config
 CurrentUserHint = namedtuple(
     "CurrentUserHint", ["id",  "username", "email", "phone"]
 )
-
 
 def verify_auth():
     if skip_token := request.headers.get("skip-auth-token"):
@@ -111,6 +111,7 @@ def init_jwt(app: Flask):
                 "id": user.id,
                 "email": user.email,
                 "phone": user.phone,
+                "anything_token": kb_config.ANYTHING_LLM_API_KEY
             }
         )
 

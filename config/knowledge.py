@@ -6,7 +6,7 @@ class KnowledgeBaseConfig:
     """知识库配置类"""
     
     # AnythingLLM 服务配置
-    ANYTHING_LLM_BASE_URL: str = os.getenv("ANYTHING_LLM_BASE_URL", "http://localhost:3001")
+    ANYTHING_LLM_BASE_URL: str = os.getenv("ANYTHING_LLM_BASE_URL", "http://127.0.0.1:3001")
     ANYTHING_LLM_API_KEY: Optional[str] = os.getenv("ANYTHING_LLM_API_KEY")
     
     # 缓存配置

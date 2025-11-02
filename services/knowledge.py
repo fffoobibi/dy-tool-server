@@ -1,5 +1,6 @@
 import uuid
 import requests
+import json
 
 from typing import List, Optional, Dict
 from dateutil.parser import parse as parse_datetime
@@ -48,6 +49,52 @@ class KnowledgeBaseService:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.session.close()
+
+    def _convert_document_data(self, doc_data: Dict) -> Document:
+        """转换API返回的文档数据为Document模型"""
+        # 解析metadata字符串为字典
+        metadata = {}
+        if doc_data.get("metadata"):
+            try:
+                if isinstance(doc_data["metadata"], str):
+                    metadata = json.loads(doc_data["metadata"])
+                else:
+                    metadata = doc_data["metadata"]
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+
+        # 从metadata或直接从doc_data中获取字段
+        return Document(
+            id=str(doc_data.get("docId", doc_data.get("id", ""))),
+            name=doc_data.get("filename") or doc_data.get("name") or metadata.get("filename", "Unknown"),
+            type=DocumentType.TEXT,  # 默认类型，可以根据需要调整
+            size=metadata.get("size", 0) or 0,
+            content=doc_data.get("content"),
+            metadata=metadata,
+            url=doc_data.get("url"),
+            title=metadata.get("title") or doc_data.get("title") or doc_data.get("filename") or "Unknown",
+            doc_author=metadata.get("doc_author"),
+            description=metadata.get("description"),
+            doc_source=metadata.get("doc_source"),
+            chunk_source=metadata.get("chunk_source"),
+            published=metadata.get("published"),
+            word_count=metadata.get("word_count"),
+            token_count_estimate=metadata.get("token_count_estimate"),
+            location=doc_data.get("location"),
+            cached=doc_data.get("cached", False),
+            pinned_workspaces=doc_data.get("pinnedWorkspaces", []),
+            watched=doc_data.get("watched", False),
+            created_at=(
+                parse_datetime(doc_data.get("createdAt"))
+                if doc_data.get("createdAt")
+                else None
+            ),
+            updated_at=(
+                parse_datetime(doc_data.get("lastUpdatedAt"))
+                if doc_data.get("lastUpdatedAt")
+                else None
+            ),
+        )
 
     # 工作区管理
     def list_workspaces(self) -> List[Workspace]:
@@ -98,6 +145,22 @@ class KnowledgeBaseService:
             ws_data = data.get("workspace")
             if not ws_data:
                 return None
+            
+            # 如果workspace是列表，取第一个元素；否则直接使用
+            if isinstance(ws_data, list):
+                if not ws_data:
+                    return None
+                ws_data = ws_data[0]
+
+            # 转换文档数据
+            documents = []
+            for doc_data in ws_data.get("documents", []):
+                try:
+                    document = self._convert_document_data(doc_data)
+                    documents.append(document)
+                except Exception as e:
+                    print(f"Warning: Failed to convert document data: {e}")
+                    continue
 
             return Workspace(
                 id=ws_data.get("id"),
@@ -106,7 +169,7 @@ class KnowledgeBaseService:
                 openai_temp=ws_data.get("openAiTemp"),
                 openai_history=ws_data.get("openAiHistory", 20),
                 openai_prompt=ws_data.get("openAiPrompt"),
-                documents=ws_data.get("documents", []),
+                documents=documents,
                 threads=ws_data.get("threads", []),
                 created_at=(
                     parse_datetime(ws_data.get("createdAt"))

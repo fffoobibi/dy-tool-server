@@ -92,8 +92,10 @@ def get_workspace(slug):
             return fail(msg="工作区不存在", code=404)
         return success(msg="success", resp={"workspace": workspace.model_dump()})
     except KnowledgeBaseException as e:
+        logger.exception("error")
         return fail(msg=e.message, code=e.status_code)
     except Exception as e:
+        logger.exception("error")
         return fail(msg=str(e))
 
 
