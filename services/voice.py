@@ -8,7 +8,6 @@ from models.voice import UserSpeaker, TTSUsageRecord
 from utils.response import success, fail
 from utils.upload import (
     get_upload_file_path,
-    save_upload_file,
     save_file_by_bytes,
     get_audio_duration,
 )
@@ -150,6 +149,16 @@ class FishSpeechAPI:
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
         return resp.content
 
+    @classmethod
+    def delete_model(cls, model_id: str, token: str):
+        """
+        调用 fish-speech 删除音色接口
+        """
+        url = f"https://api.fish.audio/model/{model_id}"
+        headers = {"Authorization": "Bearer " + token}
+        response = requests.delete(url, headers=headers)
+        response.raise_for_status()
+
 
 class VoiceService:
     """语音服务类"""
@@ -228,7 +237,7 @@ class VoiceService:
                         "description": speaker.description,
                         "is_active": speaker.is_active,
                         "create_time": (
-                            speaker.create_time.strformat("%Y-%m-%d %H:%M:%S")
+                            speaker.create_time.strftime("%Y-%m-%d %H:%M:%S")
                             if speaker.create_time
                             else None
                         ),
@@ -414,6 +423,78 @@ class VoiceService:
         return speaker is not None
 
     @staticmethod
+    def delete_speaker(
+        user_id: int,
+        speaker_id: str,
+        base_url: str,
+        token: str,
+        force_delete: bool = False,
+    ) -> Dict[str, Any]:
+        """删除用户音色"""
+        try:
+            # 验证音色是否属于当前用户
+            speaker = UserSpeaker.get_or_none(
+                (UserSpeaker.user_id == user_id)
+                & (UserSpeaker.speaker_id == speaker_id)
+                & (UserSpeaker.is_deleted == False)
+            )
+
+            if not speaker:
+                return fail("音色不存在或无权删除", 404)
+
+            # 检查是否有使用记录
+            has_records = (
+                TTSUsageRecord.select()
+                .where(
+                    (TTSUsageRecord.speaker_id == speaker_id)
+                    & (TTSUsageRecord.is_deleted == False)
+                )
+                .count()
+                > 0
+            )
+
+            if has_records and not force_delete:
+                return fail(
+                    "该音色有使用记录，如需删除请设置 force_delete=true",
+                    400,
+                )
+
+            # 如果是在线API，调用API删除
+            is_online = "api.fish.audio" in base_url
+            if is_online:
+                try:
+                    api_result = FishSpeechAPI.delete_model(speaker_id, token)
+                    logger.info(f"Fish Speech API 删除结果: {api_result}")
+                except Exception as api_error:
+                    logger.warning(f"调用 Fish Speech API 删除失败: {api_error}")
+                    # 如果API删除失败但force_delete=True，仍然继续删除本地记录
+                    if not force_delete:
+                        return fail(f"删除音色失败: {str(api_error)}", 500)
+
+            # 软删除本地记录
+            speaker.is_deleted = True
+            speaker.save()
+
+            # 如果force_delete，同时软删除相关的使用记录
+            if force_delete and has_records:
+                TTSUsageRecord.update(is_deleted=True).where(
+                    TTSUsageRecord.speaker_id == speaker_id
+                ).execute()
+
+            return success(
+                msg="音色删除成功",
+                resp={
+                    "speaker_id": speaker_id,
+                    "speaker_name": speaker.speaker_name,
+                    "deleted_records": has_records if force_delete else 0,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"删除音色失败: {e}")
+            return fail(f"删除音色失败: {str(e)}", 500)
+
+    @staticmethod
     def tts_synthesis(
         user_id: int,
         text: str,
@@ -545,6 +626,7 @@ class VoiceService:
                 description=description,
                 is_online=True,
             )
+            logger.info(f"fish-speech创建音色响应: {result}")
 
             if result and result.get("_id"):
                 speaker_id = result.get("_id")

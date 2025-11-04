@@ -4,6 +4,7 @@ from utils.response import fail, success
 from utils import current_user
 from utils.redis import get_redis
 from services.voice import VoiceService
+from loguru import logger
 import json
 
 bp = Blueprint("voice", __name__)
@@ -14,6 +15,15 @@ redis_client = get_redis()
 @bp.before_request
 def verify():
     verify_auth()
+
+
+@bp.post("/check_play_available")
+def check_available():
+    channels = request.json.get("channels") or []
+    res = redis_client.execute_command("PUBSUB", "NUMSUB", *channels)
+    val = dict(zip(res[::2], res[1::2]))
+    logger.debug(f"频道 {channels} 订阅数: {val}")
+    return success(resp=val)
 
 
 @bp.post("/play")
@@ -223,9 +233,10 @@ def create_speaker():
         return fail("音频文件、speaker_name、base_url和token不能为空", 400)
 
     # 调用服务层
-    return VoiceService.create_speaker_with_api(
+    resp = VoiceService.create_speaker_with_api(
         current_user.id, audio_file, speaker_name, base_url, token, description, texts
     )
+    return resp
 
 
 @bp.get("/speakers")
@@ -284,8 +295,9 @@ def speakers():
     """
     base_url = request.args.get("base_url", "").strip()
     is_active = request.args.get("is_active", "true").lower() in ("true", "1", "t")
-
-    return VoiceService.get_user_speakers(current_user.id, base_url, is_active)
+    resp = VoiceService.get_user_speakers(current_user.id, base_url, is_active)
+    logger.info(f"获取音色列表响应: {resp}")
+    return resp
 
 
 @bp.get("/records")
@@ -435,3 +447,83 @@ def get_usage_stats():
     days = int(request.args.get("days", 30))
 
     return VoiceService.get_user_usage_stats(user["id"], days)
+
+
+@bp.delete("/delete_speaker")
+def delete_speaker():
+    """删除音色模型
+    ---
+    tags:
+      - voice
+    summary: 删除用户的音色模型
+    description: 删除指定的音色模型，可选择同时删除相关使用记录
+    produces:
+      - application/json
+    parameters:
+      - name: speaker_id
+        in: query
+        type: string
+        required: true
+        description: 要删除的音色ID
+        example: "fish-001"
+      - name: base_url
+        in: query
+        type: string
+        required: true
+        description: fish-speech API基础地址
+        example: "https://api.fish.audio"
+      - name: token
+        in: query
+        type: string
+        required: true
+        description: fish-speech API认证token
+        example: "your_api_token"
+      - name: force_delete
+        in: query
+        type: boolean
+        required: false
+        description: 是否强制删除（包括使用记录）
+        default: false
+    responses:
+      200:
+        description: 删除成功
+        schema:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 200
+            msg:
+              type: string
+              example: "音色删除成功"
+            resp:
+              type: object
+              properties:
+                speaker_id:
+                  type: string
+                  description: 删除的音色ID
+                speaker_name:
+                  type: string
+                  description: 音色名称
+                deleted_records:
+                  type: integer
+                  description: 删除的使用记录数
+      400:
+        description: 参数错误或有使用记录
+      404:
+        description: 音色不存在
+      500:
+        description: 删除失败
+    """
+    # 参数验证
+    speaker_id = request.json.get("speaker_id", "").strip()
+    base_url = request.json.get("base_url", "").strip()
+    token = request.json.get("token", "").strip()
+    force_delete = request.json.get("force_delete")
+    if not speaker_id or not base_url or not token:
+        return fail("speaker_id、base_url和token不能为空", 400)
+
+    # 调用服务层
+    return VoiceService.delete_speaker(
+        current_user.id, speaker_id, base_url, token, force_delete
+    )
