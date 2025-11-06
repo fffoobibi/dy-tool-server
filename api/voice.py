@@ -3,7 +3,7 @@ from utils.jwt import verify_auth
 from utils.response import fail, success
 from utils import current_user
 from utils.redis import get_redis
-from services.voice import VoiceService
+from services.voice import VoiceService, FishSpeechAPI
 from loguru import logger
 import json
 
@@ -15,6 +15,20 @@ redis_client = get_redis()
 @bp.before_request
 def verify():
     verify_auth()
+
+
+@bp.post("/credit")
+def credit():
+    """获取fish-speech账号credit"""
+    token = request.json.get("token", "").strip()
+    if not token:
+        return fail("token不能为空", 400)
+    try:
+        credit_info = FishSpeechAPI.get_credit(token)
+        return success(resp=credit_info)
+    except Exception as e:
+        logger.error(f"获取fish-speech credit失败: {str(e)}")
+        return fail(f"获取credit失败: {str(e)}", 500)
 
 
 @bp.post("/check_play_available")

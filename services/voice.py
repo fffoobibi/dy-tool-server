@@ -159,6 +159,16 @@ class FishSpeechAPI:
         response = requests.delete(url, headers=headers)
         response.raise_for_status()
 
+    @classmethod
+    def get_credit(cls, token: str) -> Dict[str, Any]:
+        """
+        调用 fish-speech 获取credit
+        """
+        url = "https://api.fish.audio/wallet/self/api-credit"
+        headers = {"Authorization": "Bearer {}".format(token)}
+        response = requests.get(url, headers=headers)
+        return response.json()
+
 
 class VoiceService:
     """语音服务类"""
