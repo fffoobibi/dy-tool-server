@@ -78,9 +78,21 @@ def list_channels():
     except Exception:
         js = {}
     args = request.args
+
     def _get(name: str):
         return args.get(name) if args.get(name) is not None else js.get(name)
-    q = Channel.select().where(Channel.is_deleted == False)
+
+    def proc(ch) -> None:
+        if ch["platform"] == 0:
+            ch["platform_name"] = "douyin"
+        elif ch["platform"] == 1:
+            ch["platform_name"] = "tiktok"
+        else:
+            ch["platform_name"] = "unknown"
+
+    q = Channel.select().where(
+        Channel.is_deleted == False, Channel.user_id == current_user.id
+    )
     platform = _get("platform")
     if platform not in (None, ""):
         try:
@@ -88,8 +100,6 @@ def list_channels():
             q = q.where(Channel.platform == platform)
         except Exception:
             return fail("platform 参数非法，应为整数")
-    user_id = current_user.id
-    q = q.where(Channel.user_id == user_id)
     room_id = _get("room_id")
     if room_id not in (None, ""):
         q = q.where(Channel.room_id.contains(str(room_id)))
@@ -103,7 +113,7 @@ def list_channels():
             return fail("is_active 参数非法，需为 0/1 或 true/false")
     q = q.order_by(Channel.id.asc())
     total = q.count()
-    return paginate(q, total_count=total)
+    return paginate(q, total_count=total, proc=proc, return_all=True)
 
 
 @bp.post("/create")
@@ -149,10 +159,22 @@ def create_channel():
         user_id = int(user_id)
     except Exception:
         return fail("platform/user_id 必须是整数")
-    exists = Channel.get_or_none(Channel.platform == platform, Channel.room_id == room_id, Channel.is_deleted == False)
+    exists = Channel.get_or_none(
+        Channel.platform == platform,
+        Channel.room_id == room_id,
+        Channel.is_deleted == False,
+    )
     if exists:
         return fail("频道已存在")
-    data = dict(platform=platform, room_id=str(room_id), user_id=user_id, name=js.get("name"), description=js.get("description"), proxy_url=js.get("proxy_url"), is_active=js.get("is_active", True))
+    data = dict(
+        platform=platform,
+        room_id=str(room_id),
+        user_id=user_id,
+        name=js.get("name"),
+        description=js.get("description"),
+        proxy_url=js.get("proxy_url"),
+        is_active=js.get("is_active", True),
+    )
     try:
         ch = Channel.create(**data)
     except IntegrityError:
@@ -237,7 +259,9 @@ def delete_channel():
         description: 未找到
     """
     channel_id = request.json.get("channel_id")
-    ch: Channel = Channel.get_or_none(Channel.id == channel_id, Channel.is_deleted == False)
+    ch: Channel = Channel.get_or_none(
+        Channel.id == channel_id, Channel.is_deleted == False
+    )
     if not ch:
         return fail("频道不存在")
     # ch.is_deleted = True
