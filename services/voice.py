@@ -17,6 +17,16 @@ class FishSpeechAPI:
     commons = [
         {
             "id": None,
+            "speaker_id": "aebaa2305aa2452fbdc8f41eec852a79",
+            "speaker_name": "雷军",
+            "status": "created",
+            "description": "内置",
+            "is_active": 1,
+            "create_time": None,
+            "internal": True,
+        },
+        {
+            "id": None,
             "speaker_id": "e4642e5edccd4d9ab61a69e82d4f8a14",
             "speaker_name": "蔡徐坤",
             "status": "created",
