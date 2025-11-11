@@ -19,7 +19,10 @@ if not (BASE_DIR / "logs").exists():
 
 # 服务器配置
 bind = f"0.0.0.0:{port}"
-workers = multiprocessing.cpu_count() * 2 + 1
+cpu_count = multiprocessing.cpu_count()
+default_workers = cpu_count
+workers = min(int(os.getenv("GUNICORN_WORKERS", default_workers)), cpu_count * 2)
+
 worker_class = "gevent"
 worker_connections = 1000
 
@@ -44,8 +47,20 @@ pidfile = str(BASE_DIR / "{{ project_name }}.pid")
 
 # 钩子函数
 def on_starting(server):
-    """服务器启动钩子"""
+    """服务器启动钩子 - 预加载 FastText 模型"""
     print(f"{{ project_name }} starting on {bind}")
+    # 预加载 FastText 模型（在主进程中加载，fork 后所有 worker 共享）
+    try:
+        from services.language_detect import LanguageDetectService
+
+        print("Preloading FastText model in master process...")
+        model = LanguageDetectService.get_fasttext_model()
+        if model:
+            print("✅ FastText model preloaded successfully")
+        else:
+            print("⚠️ FastText model not loaded (file may not exist)")
+    except Exception as e:
+        print(f"⚠️ Failed to preload FastText model: {e}")
 
 
 def when_ready(server):
