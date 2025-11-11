@@ -4,13 +4,12 @@ import settings
 import typing as t
 import threading
 import time
-import sqlite3
 from pathlib import Path
 from models import db, get_models
 from playhouse.pool import (
     PooledSqliteDatabase,
     PooledMySQLDatabase,
-    PooledPostgresqlDatabase
+    PooledPostgresqlDatabase,
 )
 from contextlib import contextmanager
 from utils.packaging import get_resource_path
@@ -23,7 +22,6 @@ from functools import lru_cache
 __all__ = (
     "init_database",
     "context_db",
-    "reset_db_connections",
     "ThreadSafeSQLiteDatabase",
 )
 
@@ -32,44 +30,31 @@ _thread_local = threading.local()
 
 
 class ThreadSafeSQLiteDatabase(PooledSqliteDatabase):
-    """线程安全的SQLite数据库连接类"""
+    """
+    SQLite数据库连接类，带连接池和性能优化
+    继承自 PooledSqliteDatabase，已经内置了线程安全的连接池管理
+    """
 
     def __init__(self, *args, **kwargs):
         # 确保SQLite以线程安全模式运行
         kwargs.setdefault("check_same_thread", False)
         kwargs.setdefault("timeout", 60)  # 60秒超时
         super().__init__(*args, **kwargs)
-        self._local = threading.local()
-        self._connection_lock = threading.RLock()
 
     def _connect(self):
-        """创建线程安全的数据库连接"""
-        with self._connection_lock:
-            conn = super()._connect()
-            # 设置SQLite的线程安全模式和优化参数
-            conn.execute("PRAGMA journal_mode=WAL")  # WAL模式支持并发读写
-            conn.execute("PRAGMA synchronous=NORMAL")  # 平衡安全性和性能
-            conn.execute("PRAGMA cache_size=-32000")  # 32MB缓存
-            conn.execute("PRAGMA temp_store=MEMORY")  # 临时数据存储在内存
-            conn.execute("PRAGMA mmap_size=268435456")  # 256MB内存映射
-            conn.execute("PRAGMA busy_timeout=60000")  # 60秒忙等待超时
-            return conn
-
-    def get_conn(self):
-        """获取当前线程的数据库连接"""
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = self._connect()
-        return self._local.conn
-
-    def close_conn(self):
-        """关闭当前线程的数据库连接"""
-        if hasattr(self._local, "conn") and self._local.conn is not None:
-            try:
-                self._local.conn.close()
-            except:
-                pass
-            finally:
-                self._local.conn = None
+        """
+        创建数据库连接并设置SQLite优化参数
+        PooledSqliteDatabase 会自动管理连接的线程安全和池化
+        """
+        conn = super()._connect()
+        # 设置SQLite优化参数
+        conn.execute("PRAGMA journal_mode=WAL")  # WAL模式支持并发读写
+        conn.execute("PRAGMA synchronous=NORMAL")  # 平衡安全性和性能
+        conn.execute("PRAGMA cache_size=-32000")  # 32MB缓存
+        conn.execute("PRAGMA temp_store=MEMORY")  # 临时数据存储在内存
+        conn.execute("PRAGMA mmap_size=268435456")  # 256MB内存映射
+        conn.execute("PRAGMA busy_timeout=60000")  # 60秒忙等待超时
+        return conn
 
 
 @lru_cache(maxsize=1)
@@ -156,6 +141,7 @@ def init_database(
     if create_tables is True:
         _create_models()
         from models.account import User
+
         logger.debug("表创建完成, 检查root账号")
         if User.get_or_none(username="root") is None:
             logger.info("创建初始账号")
@@ -167,26 +153,19 @@ def init_database(
 
     if app is not None:
         logger.debug("注册数据库连接到app")
+
         @app.before_request
         def _db_connect():
+            """
+            使用连接池时，只需确保连接可用即可
+            连接池会自动管理连接的创建、复用和释放
+            """
             if request.headers.get("x-use-db", True):
-                # 使用线程安全的连接方式
                 if db.is_closed():
                     try:
                         db.connect(reuse_if_open=True)
-                        # 为每个请求设置SQLite优化参数
-                        if settings.sql_type == "sqlite":
-                            try:
-                                db.execute_sql("PRAGMA synchronous=NORMAL")
-                                db.execute_sql("PRAGMA journal_mode=WAL")
-                                db.execute_sql("PRAGMA busy_timeout=30000")
-                            except Exception as e:
-                                logger.warning(f"设置SQLite优化参数失败: {e}")
                     except Exception as e:
                         logger.error(f"数据库连接失败: {e}")
-                        # 如果连接失败，尝试关闭所有连接并重新连接
-                        if settings.sql_type == "sqlite":
-                            reset_db_connections()
                         try:
                             db.connect(reuse_if_open=True)
                         except Exception as retry_e:
@@ -195,77 +174,29 @@ def init_database(
 
         @app.teardown_request
         def _db_close(exc):
+            """
+            在请求结束时关闭数据库连接
+            注意：使用连接池时，close() 只是将连接归还给连接池，而不是真正关闭连接
+            这样可以避免连接泄漏，同时保持连接池的复用优势
+            """
             if request.headers.get("x-use-db", True):
+                # 检查是否有异常
+                if exc is not None:
+                    logger.warning(f"请求处理出现异常: {exc}")
+                    # 如果有异常，回滚事务
+                    if not db.is_closed():
+                        try:
+                            if db.in_transaction():
+                                db.rollback()
+                        except Exception as e:
+                            logger.error(f"回滚事务失败: {e}")
+
+                # 关闭连接（归还给连接池）
                 if not db.is_closed():
                     try:
                         db.close()
                     except Exception as e:
                         logger.error(f"关闭数据库连接失败: {e}")
-                        # 如果关闭失败，强制关闭所有连接
-                        try:
-                            if settings.sql_type == "sqlite":
-                                reset_db_connections()
-                        except:
-                            pass
-
-
-def reset_db_connections():
-    """
-    重置数据库连接池中的所有连接 - 线程安全版本
-    当出现连接池耗尽或连接出错时调用此函数
-    """
-    try:
-        logger.warning("重置数据库连接池...")
-
-        # 如果使用的是我们自定义的线程安全数据库类
-        if hasattr(db.obj, "close_conn"):
-            db.obj.close_conn()
-
-        # 关闭所有连接
-        if hasattr(db, "close_all"):
-            db.close_all()
-        else:
-            db.close()
-
-        # 清理线程本地存储
-        if hasattr(_thread_local, "conn"):
-            delattr(_thread_local, "conn")
-
-        logger.info("数据库连接池已重置")
-        return True
-    except Exception as e:
-        logger.error(f"重置数据库连接池失败: {e}")
-        return False
-
-
-def execute_with_retry(operation, max_retries=3, delay=0.1):
-    """
-    带重试机制的数据库操作执行器
-
-    Args:
-        operation: 要执行的数据库操作函数
-        max_retries: 最大重试次数
-        delay: 重试间隔（秒）
-    """
-    for attempt in range(max_retries + 1):
-        try:
-            return operation()
-        except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
-            error_msg = str(e).lower()
-            if "database is locked" in error_msg or "busy" in error_msg:
-                if attempt < max_retries:
-                    logger.warning(f"数据库忙碌，第{attempt+1}次重试 (错误: {e})")
-                    time.sleep(delay * (2**attempt))  # 指数退避
-                    continue
-                else:
-                    logger.error(f"数据库操作失败，已达到最大重试次数: {e}")
-                    raise
-            else:
-                # 其他类型的错误直接抛出
-                raise
-        except Exception as e:
-            logger.error(f"数据库操作发生未预期错误: {e}")
-            raise
 
 
 @contextmanager
@@ -297,15 +228,6 @@ def context_db(
         if db.is_closed():
             db.connect(reuse_if_open=True)
             connection_established = True
-            if settings.sql_type == "sqlite":
-                # 设置连接级别的SQLite优化参数
-                try:
-                    db.execute_sql("PRAGMA busy_timeout=30000")  # 30秒忙等待
-                    db.execute_sql("PRAGMA journal_mode=WAL")  # WAL模式
-                    db.execute_sql("PRAGMA synchronous=NORMAL")  # 平衡模式
-                except Exception as e:
-                    logger.warning(f"设置SQLite参数失败: {e}")
-
         # 执行业务逻辑
         if atomic:
             with db.atomic():
@@ -313,10 +235,10 @@ def context_db(
         else:
             return db
 
-    # 使用重试机制执行数据库操作
+    # 执行数据库操作，带重试机制
     for attempt in range(retry_count + 1):
         try:
-            result = execute_with_retry(db_operation, max_retries=2)
+            result = db_operation()
             yield result
             break  # 成功完成后退出重试循环
 
@@ -330,7 +252,6 @@ def context_db(
             ):
                 if attempt < retry_count:
                     logger.warning(f"数据库操作失败，第{attempt+1}次重试: {e}")
-                    reset_db_connections()  # 重置连接池
                     time.sleep(0.1 * (2**attempt))  # 指数退避
                     continue
                 else:
@@ -349,8 +270,3 @@ def context_db(
                     connection_established = False
             except Exception as cleanup_error:
                 logger.error(f"清理数据库连接失败: {cleanup_error}")
-                # 强制重置连接池
-                try:
-                    reset_db_connections()
-                except:
-                    pass

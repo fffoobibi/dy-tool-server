@@ -4,6 +4,7 @@ from utils.response import success, fail
 from openai import OpenAI
 from loguru import logger
 import settings
+from services.language_detect import LanguageDetectService
 
 bp = Blueprint("translate", __name__)
 
@@ -74,18 +75,41 @@ def translate():
                   description: 目标语言
     """
     try:
-        # 获取请求参数
         data = request.get_json()
         text = data.get("text", "").strip()
-        target_language = data.get("target_language", "").strip() # 目标语言
+        target_language = data.get("target_language", "").strip()  # 目标语言
         chat_model = data.get("llm", settings.OPENAI_MODEL).strip()
 
-        # 初始化OpenAI客户端
+        if not text:
+            return fail("文本不能为空", 400)
+
+        if target_language.lower() in ["中文", "chinese", "zh", "zh-cn", "中"]:
+            # 综合检测原始文本是否为中文
+            detection_result = LanguageDetectService.is_chinese_comprehensive(text)
+            is_zh = detection_result["is_chinese"]
+            logger.debug(
+                f"语言检测结果: is_chinese={is_zh}, method={detection_result['method']}, "
+                f"chinese_ratio={detection_result['chinese_ratio']:.2%}, "
+                f"fasttext_lang={detection_result['fasttext_lang']}, "
+                f"fasttext_confidence={detection_result['fasttext_confidence']:.4f}"
+            )
+            if is_zh:
+                logger.debug(f"原文已经是中文，无需翻译")
+                return success(
+                    resp={
+                        "original_text": text,
+                        "translated_text": text,
+                        "target_language": target_language,
+                        "detection": detection_result,
+                        "skipped": True,
+                        "reason": "原文已经是中文",
+                    }
+                )
+
         client = OpenAI(
             api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL
         )
         prompt = f"这是一个直播间的弹幕内容, 请将以下文本翻译成{target_language}，只返回翻译结果，不要添加任何解释或格式：\n\n{text}"
-        # 调用OpenAI API
         response = client.chat.completions.create(
             model=chat_model,
             messages=[
@@ -105,6 +129,8 @@ def translate():
                 "original_text": text,
                 "translated_text": translated_text,
                 "target_language": target_language,
+                "detection": detection_result,
+                "skipped": False,
             }
         )
     except Exception as e:

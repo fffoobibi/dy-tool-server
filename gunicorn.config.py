@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
 Gunicorn 配置文件
-用于生产环境部署 dy-tool-server
+用于生产环境部署 {{ project_name }}
 """
 
 import multiprocessing
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+port = os.getenv("BASE_URL", "").strip("/").split(":")[-1]
 
 # 获取项目根目录
 BASE_DIR = Path(__file__).parent
@@ -14,7 +18,7 @@ if not (BASE_DIR / "logs").exists():
     (BASE_DIR / "logs").mkdir()
 
 # 服务器配置
-bind = "0.0.0.0:8000"
+bind = f"0.0.0.0:{port}"
 workers = multiprocessing.cpu_count() * 2 + 1
 worker_class = "gevent"
 worker_connections = 1000
@@ -35,18 +39,18 @@ capture_output = True
 
 # 进程管理
 daemon = False
-pidfile = str(BASE_DIR / "dy-tool-server.pid")
+pidfile = str(BASE_DIR / "{{ project_name }}.pid")
 
 
 # 钩子函数
 def on_starting(server):
     """服务器启动钩子"""
-    print(f"dy-tool-server starting on {bind}")
+    print(f"{{ project_name }} starting on {bind}")
 
 
 def when_ready(server):
     """服务器就绪钩子"""
-    print(f"dy-tool-server ready. PID: {os.getpid()}")
+    print(f"{{ project_name }} ready. PID: {os.getpid()}")
 
 
 def worker_int(worker):
